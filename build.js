@@ -23,7 +23,7 @@ var noStrict = 'no-strict' in buildArgsAsObject;
 var noSVGExport = 'no-svg-export' in buildArgsAsObject;
 var requirejs = 'requirejs' in buildArgsAsObject ? 'requirejs' : false;
 var sourceMap = 'sourcemap' in buildArgsAsObject;
-
+var buildFast = 'fast' in buildArgsAsObject;
 // set amdLib var to encourage later support of other AMD systems
 var amdLib = requirejs;
 
@@ -123,7 +123,7 @@ function ifSpecifiedAMDInclude(amdLib) {
 
 var filesToInclude = [
   'HEADER.js',
-
+  ifSpecifiedInclude('global', 'src/globalFabric.js'),
   ifSpecifiedInclude('gestures', 'lib/event.js'),
 
   'src/mixins/observable.mixin.js',
@@ -136,7 +136,7 @@ var filesToInclude = [
   'src/util/lang_object.js',
   'src/util/lang_string.js',
   'src/util/lang_class.js',
-  'src/util/dom_event.js',
+  ifSpecifiedInclude('interaction', 'src/util/dom_event.js'),
   'src/util/dom_style.js',
   'src/util/dom_misc.js',
   'src/util/dom_request.js',
@@ -187,7 +187,6 @@ var filesToInclude = [
   ifSpecifiedInclude('interaction', 'src/mixins/object_interactivity.mixin.js'),
 
   ifSpecifiedInclude('animation', 'src/mixins/animation.mixin.js'),
-  //'src/mixins/animation.mixin.js',
 
   'src/shapes/line.class.js',
   'src/shapes/circle.class.js',
@@ -198,6 +197,7 @@ var filesToInclude = [
   'src/shapes/polygon.class.js',
   'src/shapes/path.class.js',
   'src/shapes/group.class.js',
+  ifSpecifiedInclude('interaction', 'src/shapes/active_selection.class.js'),
   'src/shapes/image.class.js',
 
   ifSpecifiedInclude('object_straightening', 'src/mixins/object_straightening.mixin.js'),
@@ -221,8 +221,10 @@ var filesToInclude = [
   ifSpecifiedInclude('image_filters', 'src/filters/blur_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/gamma_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/composed_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/hue_rotation.class.js'),
 
   ifSpecifiedInclude('text', 'src/shapes/text.class.js'),
+  ifSpecifiedInclude('text', 'src/mixins/text_style.mixin.js'),
 
   ifSpecifiedInclude('itext', 'src/shapes/itext.class.js'),
   ifSpecifiedInclude('itext', 'src/mixins/itext_behavior.mixin.js'),
@@ -232,8 +234,6 @@ var filesToInclude = [
 
   ifSpecifiedInclude('textbox', 'src/shapes/textbox.class.js'),
   ifSpecifiedInclude('textbox', 'src/mixins/textbox_behavior.mixin.js'),
-
-  ifSpecifiedInclude('node', 'src/node.js'),
 
   ifSpecifiedAMDInclude(amdLib)
 ];
@@ -255,6 +255,9 @@ else {
         console.log(err);
         throw err;
       }
+      if (buildFast) {
+        process.exit(0);
+      }
 
       // add js wrapping in AMD closure for requirejs if necessary
       if (amdLib !== false) {
@@ -270,6 +273,7 @@ else {
       exec(mininfierCmd, function (error, output) {
         if (error) {
           console.error('Minification failed using', minifier, 'with', mininfierCmd);
+          console.error('Minifier error output:\n' + error);
           process.exit(1);
         }
         console.log('Minified using', minifier, 'to ' + distributionPath + 'fabric.min.js');

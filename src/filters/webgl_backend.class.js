@@ -3,6 +3,23 @@
   'use strict';
 
   /**
+   * Tests if webgl supports certain precision
+   * @param {WebGL} Canvas WebGL context to test on
+   * @param {String} Precision to test can be any of following: 'lowp', 'mediump', 'highp'
+   * @returns {Boolean} Whether the user's browser WebGL supports given precision.
+   */
+  function testPrecision(gl, precision){
+    var fragmentSource = 'precision ' + precision + ' float;\nvoid main(){}';
+    var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader, fragmentSource);
+    gl.compileShader(fragmentShader);
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Indicate whether this filtering backend is supported by the user's browser.
    * @param {Number} tileSize check if the tileSize is supported
    * @returns {Boolean} Whether the user's browser supports WebGL.
@@ -19,6 +36,13 @@
     if (gl) {
       fabric.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
       isSupported = fabric.maxTextureSize >= tileSize;
+      var precisions = ['highp', 'mediump', 'lowp'];
+      for (var i = 0; i < 3; i++){
+        if (testPrecision(gl, precisions[i])){
+          fabric.webGlPrecision = precisions[i];
+          break;
+        };
+      }
     }
     this.isSupported = isSupported;
     return isSupported;
@@ -59,7 +83,61 @@
       this.dispose();
       this.createWebGLCanvas(width, height);
       // eslint-disable-next-line
-      this.squareVertices = new Float32Array([0, 0, 0, 1, 1, 0, 1, 1]);
+      this.aPosition = new Float32Array([0, 0, 0, 1, 1, 0, 1, 1]);
+      this.chooseFastestCopyGLTo2DMethod(width, height);
+    },
+
+    /**
+     * Pick a method to copy data from GL context to 2d canvas.  In some browsers using
+     * putImageData is faster than drawImage for that specific operation.
+     */
+    chooseFastestCopyGLTo2DMethod: function(width, height) {
+      var canMeasurePerf = typeof window.performance !== 'undefined';
+      var canUseImageData;
+      try {
+        new ImageData(1, 1);
+        canUseImageData = true;
+      }
+      catch (e) {
+        canUseImageData = false;
+      }
+      // eslint-disable-next-line no-undef
+      var canUseArrayBuffer = typeof ArrayBuffer !== 'undefined';
+      // eslint-disable-next-line no-undef
+      var canUseUint8Clamped = typeof Uint8ClampedArray !== 'undefined';
+
+      if (!(canMeasurePerf && canUseImageData && canUseArrayBuffer && canUseUint8Clamped)) {
+        return;
+      }
+
+      var targetCanvas = fabric.util.createCanvasElement();
+      // eslint-disable-next-line no-undef
+      var imageBuffer = new ArrayBuffer(width * height * 4);
+      var testContext = {
+        imageBuffer: imageBuffer,
+        destinationWidth: width,
+        destinationHeight: height,
+        targetCanvas: targetCanvas
+      };
+      var startTime, drawImageTime, putImageDataTime;
+      targetCanvas.width = width;
+      targetCanvas.height = height;
+
+      startTime = window.performance.now();
+      copyGLTo2DDrawImage.call(testContext, this.gl, testContext);
+      drawImageTime = window.performance.now() - startTime;
+
+      startTime = window.performance.now();
+      copyGLTo2DPutImageData.call(testContext, this.gl, testContext);
+      putImageDataTime = window.performance.now() - startTime;
+
+      if (drawImageTime > putImageDataTime) {
+        this.imageBuffer = imageBuffer;
+        this.copyGLTo2D = copyGLTo2DPutImageData;
+      }
+      else {
+        this.copyGLTo2D = copyGLTo2DDrawImage;
+      }
     },
 
     /**
@@ -107,6 +185,8 @@
         originalHeight: source.height || source.originalHeight,
         sourceWidth: width,
         sourceHeight: height,
+        destinationWidth: width,
+        destinationHeight: height,
         context: gl,
         sourceTexture: this.createTexture(gl, width, height, !cachedTexture && source),
         targetTexture: this.createTexture(gl, width, height),
@@ -114,15 +194,17 @@
           this.createTexture(gl, width, height, !cachedTexture && source),
         passes: filters.length,
         webgl: true,
-        squareVertices: this.squareVertices,
+        aPosition: this.aPosition,
         programCache: this.programCache,
         pass: 0,
-        filterBackend: this
+        filterBackend: this,
+        targetCanvas: targetCanvas
       };
       var tempFbo = gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, tempFbo);
       filters.forEach(function(filter) { filter && filter.applyTo(pipelineState); });
-      this.copyGLTo2D(gl.canvas, targetCanvas);
+      resizeCanvasIfNeeded(pipelineState);
+      this.copyGLTo2D(gl, pipelineState);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.deleteTexture(pipelineState.sourceTexture);
       gl.deleteTexture(pipelineState.targetTexture);
@@ -209,8 +291,8 @@
     createTexture: function(gl, width, height, textureImageSource) {
       var texture = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       if (textureImageSource) {
@@ -244,25 +326,6 @@
     },
 
     /**
-     * Copy an input WebGL canvas on to an output 2D canvas.
-     *
-     * The WebGL canvas is assumed to be upside down, with the top-left pixel of the
-     * desired output image appearing in the bottom-left corner of the WebGL canvas.
-     *
-     * @param {HTMLCanvasElement} sourceCanvas The WebGL source canvas to copy from.
-     * @param {HTMLCanvasElement} targetCanvas The 2D target canvas to copy on to.
-     */
-    copyGLTo2D: function(sourceCanvas, targetCanvas) {
-      var ctx = targetCanvas.getContext('2d');
-      ctx.translate(0, targetCanvas.height); // move it down again
-      ctx.scale(1, -1); // vertical flip
-      // where is my image on the big glcanvas?
-      var sourceY = sourceCanvas.height - targetCanvas.height;
-      ctx.drawImage(sourceCanvas, 0, sourceY, targetCanvas.width, targetCanvas.height, 0, 0,
-        targetCanvas.width, targetCanvas.height);
-    },
-
-    /**
      * Clear out cached resources related to a source image that has been
      * filtered previously.
      *
@@ -274,6 +337,8 @@
         delete this.textureCache[cacheKey];
       }
     },
+
+    copyGLTo2D: copyGLTo2DDrawImage,
 
     /**
      * Attempt to extract GPU information strings from a WebGL context.
@@ -304,3 +369,60 @@
     },
   };
 })();
+
+function resizeCanvasIfNeeded(pipelineState) {
+  var targetCanvas = pipelineState.targetCanvas,
+      width = targetCanvas.width, height = targetCanvas.height,
+      dWidth = pipelineState.destinationWidth,
+      dHeight = pipelineState.destinationHeight;
+
+  if (width !== dWidth || height !== dHeight) {
+    targetCanvas.width = dWidth;
+    targetCanvas.height = dHeight;
+  }
+}
+
+/**
+ * Copy an input WebGL canvas on to an output 2D canvas.
+ *
+ * The WebGL canvas is assumed to be upside down, with the top-left pixel of the
+ * desired output image appearing in the bottom-left corner of the WebGL canvas.
+ *
+ * @param {WebGLRenderingContext} sourceContext The WebGL context to copy from.
+ * @param {HTMLCanvasElement} targetCanvas The 2D target canvas to copy on to.
+ * @param {Object} pipelineState The 2D target canvas to copy on to.
+ */
+function copyGLTo2DDrawImage(gl, pipelineState) {
+  var glCanvas = gl.canvas, targetCanvas = pipelineState.targetCanvas,
+      ctx = targetCanvas.getContext('2d');
+  ctx.translate(0, targetCanvas.height); // move it down again
+  ctx.scale(1, -1); // vertical flip
+  // where is my image on the big glcanvas?
+  var sourceY = glCanvas.height - targetCanvas.height;
+  ctx.drawImage(glCanvas, 0, sourceY, targetCanvas.width, targetCanvas.height, 0, 0,
+    targetCanvas.width, targetCanvas.height);
+}
+
+/**
+ * Copy an input WebGL canvas on to an output 2D canvas using 2d canvas' putImageData
+ * API. Measurably faster than using ctx.drawImage in Firefox (version 54 on OSX Sierra).
+ *
+ * @param {WebGLRenderingContext} sourceContext The WebGL context to copy from.
+ * @param {HTMLCanvasElement} targetCanvas The 2D target canvas to copy on to.
+ * @param {Object} pipelineState The 2D target canvas to copy on to.
+ */
+function copyGLTo2DPutImageData(gl, pipelineState) {
+  var targetCanvas = pipelineState.targetCanvas, ctx = targetCanvas.getContext('2d'),
+      dWidth = pipelineState.destinationWidth,
+      dHeight = pipelineState.destinationHeight,
+      numBytes = dWidth * dHeight * 4;
+
+  // eslint-disable-next-line no-undef
+  var u8 = new Uint8Array(this.imageBuffer, 0, numBytes);
+  // eslint-disable-next-line no-undef
+  var u8Clamped = new Uint8ClampedArray(this.imageBuffer, 0, numBytes);
+
+  gl.readPixels(0, 0, dWidth, dHeight, gl.RGBA, gl.UNSIGNED_BYTE, u8);
+  var imgData = new ImageData(u8Clamped, dWidth, dHeight);
+  ctx.putImageData(imgData, 0, 0);
+}

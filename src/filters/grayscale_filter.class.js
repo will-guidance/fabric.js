@@ -57,7 +57,7 @@
 
 
     /**
-     * Grayscale mode, between 'average', 'lighntess', 'luminosity'
+     * Grayscale mode, between 'average', 'lightness', 'luminosity'
      * @param {String} type
      * @default
      */
@@ -101,8 +101,8 @@
      */
     retrieveShader: function(options) {
       var cacheKey = this.type + '_' + this.mode;
-      var shaderSource = this.fragmentSource[this.mode];
       if (!options.programCache.hasOwnProperty(cacheKey)) {
+        var shaderSource = this.fragmentSource[this.mode];
         options.programCache[cacheKey] = this.createProgram(options.context, shaderSource);
       }
       return options.programCache[cacheKey];

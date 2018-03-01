@@ -19,7 +19,7 @@
     /**
      * Experimental. This object is a sort of repository of help layers used to avoid
      * of recreating them during frequent filtering. If you are previewing a filter with
-     * a slider you problably do not want to create help layers every filter step.
+     * a slider you probably do not want to create help layers every filter step.
      * in this object there will be appended some canvases, created once, resized sometimes
      * cleared never. Clearing is left to the developer.
      **/
@@ -32,9 +32,9 @@
      * to the provided destination canvas.
      *
      * @param {EnhancedFilter} filters The filter to apply.
-     * @param {HTMLImageElement|HTMLCanvasElement} source The source to be filtered.
-     * @param {Number} width The width of the source input.
-     * @param {Number} height The height of the source input.
+     * @param {HTMLImageElement|HTMLCanvasElement} sourceElement The source to be filtered.
+     * @param {Number} sourceWidth The width of the source input.
+     * @param {Number} sourceHeight The height of the source input.
      * @param {HTMLCanvasElement} targetCanvas The destination for filtered output to be drawn.
      */
     applyFilters: function(filters, sourceElement, sourceWidth, sourceHeight, targetCanvas) {
